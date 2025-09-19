@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  archive_read_service:
+    image: ${IMAGE_NAME:-telegram-auto-read}
+    container_name: archive_read_service
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./sessions:/app/sessions
+    environment:
+      TOPIC_LIMIT: ${TOPIC_LIMIT:-}

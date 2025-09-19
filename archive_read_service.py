@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 """
-Service «auto-read-archive» v2.5
+Service "auto-read-archive" v2.5
 
-Цель — очистить счётчики непрочитанного у всех архивных чатов,
-включая форумы (группы с темами).
+Goal — reset unread counters for every archived chat, including forums with
+topics.
 
-Что исправлено в v2.5
----------------------
-* Убрана постраничная навигация тем — Telegram часто возвращает только одну
-  страницу, а дополнительные атрибуты могут отсутствовать.
-* Теперь берём **только первую страницу** тем (до 100).
-* Для каждой темы вызываем `ReadDiscussion` с `read_max_id=0` — гарантированно
-  очищает счётчик.
+Changes in v2.5
+---------------
+* Removed topic pagination — Telegram often returns a single page and extra
+  attributes may be missing.
+* Fetch **only the first page** of topics (up to 100).
+* Call `ReadDiscussion` with `read_max_id=0` for every topic to reliably clear
+  the counter.
 
-Если у вас >100 тем в одном форуме, можно увеличить `TOPIC_LIMIT`, но
-чаще такая ситуация маловероятна.
+If you have more than 100 topics in a single forum you can raise `TOPIC_LIMIT`,
+though that situation should be rare.
 """
 from __future__ import annotations
 
 import asyncio
 import getpass
 import logging
+import os
 from pathlib import Path
 from typing import Any, List
 
@@ -28,10 +29,10 @@ import yaml
 from telethon import TelegramClient, errors, functions, types
 
 CONFIG_FILE = Path(__file__).with_name("config.yaml")
-TOPIC_LIMIT = 100  # максимальное число тем за раз
+TOPIC_LIMIT = int(os.getenv("TOPIC_LIMIT") or 100)  # maximum number of topics per request
 
 # ---------------------------------------------------------------------------
-# Загрузка конфига
+# Configuration loading
 # ---------------------------------------------------------------------------
 
 def load_config() -> dict[str, Any]:
@@ -39,27 +40,27 @@ def load_config() -> dict[str, Any]:
         return yaml.safe_load(fh)
 
 # ---------------------------------------------------------------------------
-# Авторизация
+# Authorization
 # ---------------------------------------------------------------------------
 
 async def ensure_authorized(client: TelegramClient, phone: str) -> None:
     if await client.is_user_authorized():
         return
-    print("→ Сессия неактивна, шлем код…")
+    print("→ Session inactive, sending code…")
     await client.send_code_request(phone)
-    code = input("Код из Telegram: ").strip()
+    code = input("Code from Telegram: ").strip()
     try:
         await client.sign_in(phone, code)
     except errors.SessionPasswordNeededError:
-        pwd = getpass.getpass("Пароль 2FA: ")
+        pwd = getpass.getpass("2FA password: ")
         await client.sign_in(password=pwd)
 
 # ---------------------------------------------------------------------------
-# Получение списка тем
+# Retrieving the topic list
 # ---------------------------------------------------------------------------
 
 async def iter_topics(client: TelegramClient, channel: types.Channel) -> List[types.ForumTopic]:
-    """Получить до TOPIC_LIMIT тем форума (без постраничной навигации)."""
+    """Return up to TOPIC_LIMIT forum topics without pagination."""
     try:
         resp = await client(
             functions.channels.GetForumTopicsRequest(
@@ -73,15 +74,15 @@ async def iter_topics(client: TelegramClient, channel: types.Channel) -> List[ty
         )
         return list(resp.topics)
     except Exception as exc:
-        logging.debug("%s: не удалось получить темы (%s)", channel, exc)
+        logging.debug("%s: failed to fetch topics (%s)", channel, exc)
         return []
 
 # ---------------------------------------------------------------------------
-# Пометка тем прочитанными
+# Marking topics as read
 # ---------------------------------------------------------------------------
 
 async def mark_forum_topics_read(client: TelegramClient, channel: types.Channel, chat_name: str) -> None:
-    """Снимает счётчики непрочитанного во всех темах форума."""
+    """Clear unread counters for every topic in the forum."""
     topics = await iter_topics(client, channel)
     for topic in topics:
         try:
@@ -92,28 +93,28 @@ async def mark_forum_topics_read(client: TelegramClient, channel: types.Channel,
                     read_max_id=0,
                 )
             )
-            logging.debug("%s • тема '%s' прочитана", chat_name, topic.title)
+            logging.debug("%s • topic '%s' marked as read", chat_name, topic.title)
         except errors.BadRequestError as exc:
-            logging.debug("%s • тема '%s' → %s", chat_name, topic.title, exc)
+            logging.debug("%s • topic '%s' → %s", chat_name, topic.title, exc)
 
 # ---------------------------------------------------------------------------
-# Пометка диалогов прочитанными
+# Marking dialogs as read
 # ---------------------------------------------------------------------------
 
 async def mark_dialog_read(client: TelegramClient, dialog: types.Dialog) -> None:
     if dialog.unread_count:
         try:
             await client.send_read_acknowledge(dialog.entity)
-            logging.info("'%s' помечен как прочитанный (%d)", dialog.name, dialog.unread_count)
+            logging.info("'%s' marked as read (%d)", dialog.name, dialog.unread_count)
         except Exception as exc:
-            logging.debug("Не удалось прочитать %s: %s", dialog.name, exc)
+            logging.debug("Failed to mark %s as read: %s", dialog.name, exc)
 
     entity = dialog.entity
     if isinstance(entity, types.Channel) and getattr(entity, "forum", False):
         await mark_forum_topics_read(client, entity, dialog.name)
 
 # ---------------------------------------------------------------------------
-# Основной цикл
+# Main loop
 # ---------------------------------------------------------------------------
 
 async def run_service(cfg: dict[str, Any]) -> None:
@@ -129,7 +130,7 @@ async def run_service(cfg: dict[str, Any]) -> None:
 
     async with client:
         await ensure_authorized(client, tg["phone"])
-        logging.info("✅ Авторизован. Интервал %d с", interval)
+        logging.info("✅ Authorized. Interval %d s", interval)
 
         while True:
             try:
@@ -137,11 +138,11 @@ async def run_service(cfg: dict[str, Any]) -> None:
                 for dlg in archived:
                     await mark_dialog_read(client, dlg)
             except Exception as exc:
-                logging.exception("Ошибка при обходе архива: %s", exc)
+                logging.exception("Error while iterating through archive: %s", exc)
             await asyncio.sleep(interval)
 
 # ---------------------------------------------------------------------------
-# Точка входа
+# Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
@@ -153,7 +154,7 @@ def main() -> None:
     try:
         asyncio.run(run_service(cfg))
     except KeyboardInterrupt:
-        print("\n⏹️  Остановлено пользователем.")
+        print("\n⏹️  Stopped by user.")
 
 
 if __name__ == "__main__":
