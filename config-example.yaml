@@ -1,0 +1,14 @@
+telegram:
+  # Aquire your api_id and api_hash on https://my.telegram.org using your telegram account
+  api_id: 123456789
+  api_hash: "abcdef1234567890abcdef1234567890abcdef"
+  # your phone number on which telegram account registered
+  phone: "+79998887766"
+  # session file (would be created in local dir)
+  session: "telegram_read"
+
+service:
+  # Seconds between checks
+  check_interval: 600
+  # Log level for the script, can be: DEBUG | INFO | WARNING | ERROR
+  log_level: "INFO"

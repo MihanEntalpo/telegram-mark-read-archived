@@ -1,0 +1,6 @@
+venv/*
+.python-version
+config.yaml
+*.session
+*.session-journal
+
